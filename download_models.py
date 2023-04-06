@@ -1,6 +1,7 @@
 import os
 import logging
 import urllib.request
+
 from pathlib import Path
 from argparse import ArgumentParser
 
@@ -28,13 +29,13 @@ def main(args):
 
     if args.model == "all":
         for model_url in model_to_url.values():
-            model_file = os.path.split("/")[-1]
-            urllib.request.urlretrieve(model_url, os.path.join(dest, model_file))
+            model_file = os.path.split(model_url)[-1]
+            urllib.request.urlretrieve(model_url, dest / model_file)
             logger.info(f"Downloaded model: {model_file}")
     else:
         model_url = model_to_url[args.model]
-        model_file = os.path.split("/")[-1]
-        urllib.request.urlretrieve(model_url, os.path.join(dest, model_file))
+        model_file = os.path.split(model_url)[-1]
+        urllib.request.urlretrieve(model_url, dest / model_file)
         logger.info(f"Downloaded model: {model_file}")
 
 

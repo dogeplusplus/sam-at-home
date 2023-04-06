@@ -5,7 +5,7 @@ import numpy as np
 import gradio as gr
 
 from skimage import color
-from segment_anything import build_sam, SamAutomaticMaskGenerator
+from segment_anything import SamAutomaticMaskGenerator, build_sam_vit_b, build_sam_vit_h, build_sam_vit_l
 
 
 logger = logging.getLogger(__name__)
@@ -60,48 +60,60 @@ def generate(
 
 
 def load_model(name):
-    global model, checkpoint_name, device
+    global model, device, checkpoint_name
     if model is None or checkpoint_name != name:
         checkpoint_path = os.path.join("models", name)
-        model = build_sam(checkpoint_path)
+
+        if "vit_b" in name:
+            model = build_sam_vit_b(checkpoint_path)
+        elif "vit_h" in name:
+            model = build_sam_vit_h(checkpoint_path)
+        elif "vit_l" in name:
+            model = build_sam_vit_l(checkpoint_path)
+        else:
+            raise ValueError(f"Invalid checkpoint name: {name}")
+
         checkpoint_name = name
-        logger.info(f"Loaded model: {checkpoint_name}")
         model.to(device)
+        logger.info(f"Loaded model: {checkpoint_name}")
 
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 model = None
 checkpoint_name = None
 available_models = [x for x in os.listdir("models") if x.endswith(".pth")]
-load_model(available_models[0])
+default_model = available_models[0]
+load_model(default_model)
 
 with gr.Blocks() as application:
     with gr.Row():
-        default_model = available_models[0]
-        selected_model = gr.Dropdown(choices=available_models, label="Model", value=default_model)
-        selected_model.change(load_model)
-
-        with gr.Row():
-            points_per_side = gr.Number(label="points_per_side", value=32, precision=0)
-            points_per_batch = gr.Number(label="points_per_batch", value=64, precision=0)
-            stability_score_offset = gr.Number(label="stability_score_offset", value=1)
-            crop_n_layers = gr.Number(label="crop_n_layers", minimum=0, maximum=10, precision=0)
-            crop_n_points_downscale_factor = gr.Number(label="crop_n_points_downscale_factor", value=1, precision=0)
-            min_mask_region_area = gr.Number(label="min_mask_region_area", precision=0, value=0)
-
         with gr.Column():
-            pred_iou_thresh = gr.Slider(label="pred_iou_thresh", minimum=0, maximum=1, value=0.88, step=0.01)
-            stability_score_thresh = gr.Slider(label="stability_score_thresh",
-                                               minimum=0, maximum=1, value=0.95, step=0.01)
-            box_nms_thresh = gr.Slider(label="box_nms_thresh", minimum=0, maximum=1, value=0.7)
+            gr.Markdown(value="# Segment Anything At Home")
+            with gr.Row():
+                selected_model = gr.Dropdown(choices=available_models, label="Model",
+                                             value=default_model, interactive=True)
+                selected_model.change(load_model, inputs=[selected_model])
 
-        with gr.Column():
-            crop_nms_thresh = gr.Slider(label="crop_nms_thresh", minimum=0, maximum=1, value=0.7)
-            crop_overlap_ratio = gr.Slider(label="crop_overlap_ratio", minimum=0,
-                                           maximum=1, value=512 / 1500, step=0.01)
+            with gr.Row():
+                image = gr.Image(source="upload", label="Input Image")
 
-    with gr.Row():
-        image = gr.Image(source="upload", label="Input Image")
+            with gr.Row():
+                points_per_side = gr.Number(label="points_per_side", value=32, precision=0)
+                points_per_batch = gr.Number(label="points_per_batch", value=64, precision=0)
+                stability_score_offset = gr.Number(label="stability_score_offset", value=1)
+                crop_n_layers = gr.Number(label="crop_n_layers", minimum=0, precision=0)
+                crop_n_points_downscale_factor = gr.Number(label="crop_n_points_downscale_factor", value=1, precision=0)
+                min_mask_region_area = gr.Number(label="min_mask_region_area", precision=0, value=0)
+
+            with gr.Column():
+                pred_iou_thresh = gr.Slider(label="pred_iou_thresh", minimum=0, maximum=1, value=0.88, step=0.01)
+                stability_score_thresh = gr.Slider(label="stability_score_thresh",
+                                                   minimum=0, maximum=1, value=0.95, step=0.01)
+                box_nms_thresh = gr.Slider(label="box_nms_thresh", minimum=0, maximum=1, value=0.7)
+                crop_nms_thresh = gr.Slider(label="crop_nms_thresh", minimum=0, maximum=1, value=0.7)
+                crop_overlap_ratio = gr.Slider(label="crop_overlap_ratio", minimum=0,
+                                               maximum=1, value=512 / 1500, step=0.01)
+
         output = gr.Image(interactive=False, label="Segmentation Map")
 
     submit = gr.Button("Submit")
