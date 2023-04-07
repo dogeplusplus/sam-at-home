@@ -4,6 +4,7 @@ import logging
 import numpy as np
 import gradio as gr
 
+from einops import repeat
 from skimage import color
 from segment_anything import SamAutomaticMaskGenerator, build_sam_vit_b, build_sam_vit_h, build_sam_vit_l
 
@@ -22,6 +23,16 @@ def create_color_mask(image, annotations):
 
     color_mask = color.label2rgb(mask, image)
     return color_mask
+
+
+def extract_rgba_masks(image, annotations):
+    image_segments = []
+    for ann in annotations:
+        segment = repeat(ann["segmentation"].astype(np.uint8) * 255, "h w -> h w 1")
+        image_segment = np.concatenate([image, segment], axis=-1)
+        image_segments.append(image_segment)
+
+    return image_segments
 
 
 def generate(
@@ -56,7 +67,8 @@ def generate(
 
     annotations = generator.generate(image)
     color_mask = create_color_mask(image, annotations)
-    return color_mask
+    annotation_masks = extract_rgba_masks(image, annotations)
+    return color_mask, annotation_masks
 
 
 def load_model(name):
@@ -114,7 +126,9 @@ with gr.Blocks() as application:
                 crop_overlap_ratio = gr.Slider(label="crop_overlap_ratio", minimum=0,
                                                maximum=1, value=512 / 1500, step=0.01)
 
-        output = gr.Image(interactive=False, label="Segmentation Map")
+        with gr.Column():
+            output = gr.Image(interactive=False, label="Segmentation Map")
+            annotation_masks = gr.Gallery(label="Segment Images", inputs=[image, output], live=True)
 
     submit = gr.Button("Submit")
     submit.click(generate, inputs=[
@@ -130,6 +144,7 @@ with gr.Blocks() as application:
         crop_overlap_ratio,
         crop_n_points_downscale_factor,
         min_mask_region_area,
-    ], outputs=[output])
+    ], outputs=[output, annotation_masks])
+
 
 application.launch()
