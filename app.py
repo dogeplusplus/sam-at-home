@@ -128,7 +128,7 @@ with gr.Blocks() as application:
 
         with gr.Column():
             output = gr.Image(interactive=False, label="Segmentation Map")
-            annotation_masks = gr.Gallery(label="Segment Images", inputs=[image, output], live=True)
+            annotation_masks = gr.Gallery(label="Segment Images", inputs=[output])
 
     submit = gr.Button("Submit")
     submit.click(generate, inputs=[
