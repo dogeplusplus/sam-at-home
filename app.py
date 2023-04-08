@@ -29,7 +29,8 @@ def find_dots(image, image_with_keypoints):
     # Find centre of mass of each keypoint
     for i in range(1, num_labels):
         com = np.argwhere(diff_labels == i).mean(axis=0)
-        points.append(com)
+        # predictor order is (x, y), numpy order is (y, x)
+        points.append([com[1], com[0]])
 
     return np.array(points)
 
