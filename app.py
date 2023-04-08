@@ -129,7 +129,7 @@ def guided_prediction(image, fg_canvas, bg_canvas):
             point_labels = np.zeros(len(bg_points))
     elif bg_points.size == 0:
         point_coords = fg_points
-        point_labels = np.ones(len(bg_points))
+        point_labels = np.ones(len(fg_points))
     else:
         point_coords = np.concatenate([fg_points, bg_points])
         point_labels = np.concatenate([np.ones(len(fg_points)), np.zeros(len(bg_points))])
