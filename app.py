@@ -27,7 +27,7 @@ def find_dots(image, image_with_keypoints):
     diff_labels, num_labels = label(diff_mask, return_num=True)
     points = []
     # Find centre of mass of each keypoint
-    for i in range(1, num_labels):
+    for i in range(1, num_labels+1):
         com = np.argwhere(diff_labels == i).mean(axis=0)
         # predictor order is (x, y), numpy order is (y, x)
         points.append([com[1], com[0]])
@@ -100,7 +100,6 @@ def load_model(name):
     global model, device, checkpoint_name
     if model is None or checkpoint_name != name:
         checkpoint_path = os.path.join("models", name)
-
         if "vit_b" in name:
             model = build_sam_vit_b(checkpoint_path)
         elif "vit_h" in name:
@@ -109,7 +108,6 @@ def load_model(name):
             model = build_sam_vit_l(checkpoint_path)
         else:
             raise ValueError(f"Invalid checkpoint name: {name}")
-
         checkpoint_name = name
         model.to(device)
         logger.info(f"Loaded model: {checkpoint_name}")
@@ -117,7 +115,6 @@ def load_model(name):
 
 def guided_prediction(image, fg_canvas, bg_canvas):
     global model
-
     fg_points = find_dots(image, fg_canvas)
     bg_points = find_dots(image, bg_canvas)
 
@@ -140,10 +137,12 @@ def guided_prediction(image, fg_canvas, bg_canvas):
     masks, _, _ = predictor.predict(
         point_coords=point_coords,
         point_labels=point_labels,
+        multimask_output=True,
     )
-    masks = np.argmax(masks, axis=0)
-    color_mask = color.label2rgb(masks, image)
-    return color_mask
+    masks = masks.astype(int)
+
+    color_masks = [color.label2rgb(mask, image) for mask in masks]
+    return color_masks
 
 
 def display_detected_keypoints(image, image_with_keypoints):
@@ -153,18 +152,18 @@ def display_detected_keypoints(image, image_with_keypoints):
     return diff_mask, num_labels
 
 
-device = "cuda" if torch.cuda.is_available() else "cpu"
-model = None
-checkpoint_name = None
 available_models = [x for x in os.listdir("models") if x.endswith(".pth")]
 default_model = available_models[0]
+model = None
+checkpoint_name = None
+device = "cuda" if torch.cuda.is_available() else "cpu"
 load_model(default_model)
-
 
 with gr.Blocks() as application:
     gr.Markdown(value="# Segment Anything At Home")
     selected_model = gr.Dropdown(choices=available_models, label="Model",
                                  value=default_model, interactive=True)
+
     selected_model.change(load_model, inputs=[selected_model], show_progress=True)
     with gr.Tab("Automatic Segmentor"):
         with gr.Row():
@@ -173,7 +172,6 @@ with gr.Blocks() as application:
                     image = gr.Image(
                         source="upload",
                         label="Input Image",
-                        tool="color-sketch",
                         elem_id="image",
                         brush_radius=20,
                     )
@@ -261,13 +259,13 @@ with gr.Blocks() as application:
 
             with gr.Column():
                 gr.Markdown(pred_instructions)
-                output_image = gr.Image(label="Output Image")
+                output_masks = gr.Gallery(label="Output Masks")
 
         predict = gr.Button("Predict")
         predict.click(
             guided_prediction,
             inputs=[base_image, fg_canvas, bg_canvas],
-            outputs=output_image,
+            outputs=output_masks,
         )
         predict.click(display_detected_keypoints, inputs=[base_image,
                       fg_canvas], outputs=[fg_keypoints, num_fg_keypoints])
