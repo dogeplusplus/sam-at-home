@@ -237,10 +237,29 @@ with gr.Blocks() as application:
                 base_image.upload(set_sketch_images, inputs=[base_image], outputs=[fg_canvas, bg_canvas])
 
                 with gr.Row():
-                    num_fg_keypoints = gr.Text(label="Number of Foreground Keypoints", interactive=False)
-                    num_bg_keypoints = gr.Text(label="Number of Background Keypoints", interactive=False)
+                    num_fg_keypoints = gr.Text(label="# Detected Foreground Keypoints", interactive=False)
+                    num_bg_keypoints = gr.Text(label="# Detected Background Keypoints", interactive=False)
+
+            pred_instructions = """
+            ## Instructions
+            The predictor tab uses the `SamPredictor` class interface for doing inference. \
+            This exists to allow users to insert foreground/background keypoints into the \
+            image to guide the segmentation.
+
+            1. Upload the image using the `Base Image` canvas. This will auto-populate the \
+            foreground/background canvas
+            2. Add Foreground/Background keypoints by placing dots on the respective canvases.
+            3. Click on the predict button.
+
+            *Notes: Ensure that the color is not exactly the same as the pixels on the base image \
+            where you are placing points. Any color or even multiple colors are allowed, so long \
+            as it's different from the point on the base image. There's a heuristic algorithm that \
+            locates the points by computing the diff of the base/keypoint images, taking the centre \
+            of mass of each label. As such brush strokes/more complex shapes are treated as a single point.*
+            """
 
             with gr.Column():
+                gr.Markdown(pred_instructions)
                 output_image = gr.Image(label="Output Image")
 
         predict = gr.Button("Predict")
