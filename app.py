@@ -140,8 +140,9 @@ def guided_prediction(image, fg_canvas, bg_canvas):
         multimask_output=True,
     )
     masks = masks.astype(int)
-
-    color_masks = [color.label2rgb(mask, image) for mask in masks]
+    # Assign each candidate mask a different color
+    mask_colors = [[(1, 0, 0)], [(0, 1, 0)], [(0, 0, 1)]]
+    color_masks = [color.label2rgb(masks[i], image, mc) for i, mc in enumerate(mask_colors)]
     return color_masks
 
 
