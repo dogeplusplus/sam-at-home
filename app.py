@@ -1,9 +1,12 @@
 import os
+import cv2
 import torch
 import logging
 import numpy as np
 import gradio as gr
 
+from scipy.stats import mode
+from copy import copy
 from einops import repeat
 from skimage import color
 from skimage.measure import label
@@ -113,10 +116,46 @@ def load_model(name):
         logger.info(f"Loaded model: {checkpoint_name}")
 
 
-def guided_prediction(image, fg_canvas, bg_canvas):
+def display_detected_keypoints(image, image_with_keypoints):
+    diff_mask = np.max(image != image_with_keypoints, axis=-1) * 255
+    _, num_labels = label(diff_mask, return_num=True)
+    diff_mask = repeat(diff_mask, "... -> ... 3")
+    return diff_mask, num_labels
+
+
+def detect_boxes(image, image_with_boxes):
+    diff_mask = np.sum(image != image_with_boxes, axis=-1) > 0
+    box_colors = image_with_boxes[diff_mask]
+
+    # No boxes
+    if np.max(diff_mask) == 0:
+        return None, None
+
+    # Get counts of each pixel color in the diff, select those only with a count above a threshold
+    # The diff mask will contain colors that are anti-aliased, we want to ignore these
+    box_color = mode(box_colors, axis=0, keepdims=True)[0][0]
+
+    color_mask = np.sum(image_with_boxes == box_color, axis=-1) == 3
+    bounding_mask = ((color_mask & diff_mask)).astype(np.uint8)
+    x, y, w, h = cv2.boundingRect(bounding_mask)
+    box = np.array([x, y, x + w, y + h])
+    return box, box_color.tolist()
+
+
+def draw_boxes(image, image_with_boxes):
+    box, color = detect_boxes(image, image_with_boxes)
+    image = copy(image)
+    if box is None:
+        return image, 0
+    cv2.rectangle(image, box[:2], box[2:], list(color), 5)
+    return image, 1
+
+
+def guided_prediction(image, fg_canvas, bg_canvas, box_canvas):
     global model
     fg_points = find_dots(image, fg_canvas)
     bg_points = find_dots(image, bg_canvas)
+    boxes, _ = detect_boxes(image, box_canvas)
 
     if fg_points.size == 0:
         if bg_points.size == 0:
@@ -134,23 +173,18 @@ def guided_prediction(image, fg_canvas, bg_canvas):
 
     predictor = SamPredictor(model)
     predictor.set_image(image)
+
     masks, _, _ = predictor.predict(
         point_coords=point_coords,
         point_labels=point_labels,
+        box=boxes,
         multimask_output=True,
     )
     masks = masks.astype(int)
-    # Assign each candidate mask a different color
-    mask_colors = [[(1, 0, 0)], [(0, 1, 0)], [(0, 0, 1)]]
-    color_masks = [color.label2rgb(masks[i], image, mc) for i, mc in enumerate(mask_colors)]
+    colors = [[(1, 0, 0)], [(0, 1, 0)], [(0, 0, 1)]]
+    color_masks = [color.label2rgb(masks[i], image, c) for i, c in enumerate(colors)]
+
     return color_masks
-
-
-def display_detected_keypoints(image, image_with_keypoints):
-    diff_mask = np.max(image != image_with_keypoints, axis=-1) * 255
-    _, num_labels = label(diff_mask, return_num=True)
-    diff_mask = repeat(diff_mask, "... -> ... 3")
-    return diff_mask, num_labels
 
 
 available_models = [x for x in os.listdir("models") if x.endswith(".pth")]
@@ -231,14 +265,19 @@ with gr.Blocks() as application:
                     bg_canvas = gr.Image(label="Background Keypoints", tool="color-sketch", brush_radius=30)
                     bg_keypoints = gr.Image(label="Detected Background Keypoints", interactive=False)
 
-                def set_sketch_images(image):
-                    return image, image
+                with gr.Row():
+                    box_canvas = gr.Image(label="Box Canvas (Experimental)", tool="color-sketch", brush_radius=30)
+                    boxes = gr.Image(label="Detected Bounding Boxes", interactive=False)
 
-                base_image.upload(set_sketch_images, inputs=[base_image], outputs=[fg_canvas, bg_canvas])
+                def set_sketch_images(image):
+                    return image, image, image
+
+                base_image.upload(set_sketch_images, inputs=[base_image], outputs=[fg_canvas, bg_canvas, box_canvas])
 
                 with gr.Row():
                     num_fg_keypoints = gr.Text(label="# Detected Foreground Keypoints", interactive=False)
                     num_bg_keypoints = gr.Text(label="# Detected Background Keypoints", interactive=False)
+                    num_boxes = gr.Text(label="# Detected Bounding Boxes", interactive=False)
 
             pred_instructions = """
             ## Instructions
@@ -265,12 +304,14 @@ with gr.Blocks() as application:
         predict = gr.Button("Predict")
         predict.click(
             guided_prediction,
-            inputs=[base_image, fg_canvas, bg_canvas],
+            inputs=[base_image, fg_canvas, bg_canvas, box_canvas],
             outputs=output_masks,
         )
         predict.click(display_detected_keypoints, inputs=[base_image,
                       fg_canvas], outputs=[fg_keypoints, num_fg_keypoints])
         predict.click(display_detected_keypoints, inputs=[base_image,
                       bg_canvas], outputs=[bg_keypoints, num_bg_keypoints])
+        predict.click(draw_boxes, inputs=[base_image,
+                      box_canvas], outputs=[boxes, num_boxes])
 
 application.launch()
