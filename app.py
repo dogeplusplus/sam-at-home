@@ -288,13 +288,16 @@ with gr.Blocks() as application:
             1. Upload the image using the `Base Image` canvas. This will auto-populate the \
             foreground/background canvas
             2. Add Foreground/Background keypoints by placing dots on the respective canvases.
-            3. Click on the predict button.
+            3. (Optional) Draw a crude bounding box in the experimental box around an object. \
+            The UI will determine a bounding rectangle which is then used for the `predict` interface. \
+            **Note: currently supports only a single bounding box for now.**
+            4. Click on the predict button.
 
-            *Notes: Ensure that the color is not exactly the same as the pixels on the base image \
+            **Notes: Ensure that the color is not exactly the same as the pixels on the base image \
             where you are placing points. Any color or even multiple colors are allowed, so long \
             as it's different from the point on the base image. There's a heuristic algorithm that \
             locates the points by computing the diff of the base/keypoint images, taking the centre \
-            of mass of each label. As such brush strokes/more complex shapes are treated as a single point.*
+            of mass of each label. As such brush strokes/more complex shapes are treated as a single point.**
             """
 
             with gr.Column():
