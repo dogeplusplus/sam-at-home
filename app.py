@@ -50,12 +50,13 @@ def create_color_mask(image, annotations):
     return color_mask
 
 
-def extract_rgba_masks(image, annotations):
+def extract_rgba_masks(image, annotations, mask_filter_area):
     image_segments = []
     for ann in annotations:
-        segment = repeat(ann["segmentation"].astype(np.uint8) * 255, "h w -> h w 1")
-        image_segment = np.concatenate([image, segment], axis=-1)
-        image_segments.append(image_segment)
+        if np.sum(ann["segmentation"]) >= mask_filter_area:
+            segment = repeat(ann["segmentation"].astype(np.uint8) * 255, "h w -> h w 1")
+            image_segment = np.concatenate([image, segment], axis=-1)
+            image_segments.append(image_segment)
 
     return image_segments
 
@@ -74,6 +75,7 @@ def generate(
     crop_n_points_downscale_factor,
     min_mask_region_area,
     display_rgba_segments,
+    mask_filter_area,
 ):
     global model
     generator = SamAutomaticMaskGenerator(
@@ -95,7 +97,7 @@ def generate(
     color_mask = create_color_mask(image, annotations)
     annotation_masks = []
     if display_rgba_segments:
-        annotation_masks = extract_rgba_masks(image, annotations)
+        annotation_masks = extract_rgba_masks(image, annotations, mask_filter_area)
     return color_mask, annotation_masks
 
 
@@ -211,16 +213,17 @@ with gr.Blocks() as application:
                         brush_radius=20,
                     )
 
-                with gr.Row():
-                    points_per_side = gr.Number(label="points_per_side", value=32, precision=0)
-                    points_per_batch = gr.Number(label="points_per_batch", value=64, precision=0)
-                    stability_score_offset = gr.Number(label="stability_score_offset", value=1)
-                    crop_n_layers = gr.Number(label="crop_n_layers", precision=0)
-                    crop_n_points_downscale_factor = gr.Number(
-                        label="crop_n_points_downscale_factor", value=1, precision=0)
-                    min_mask_region_area = gr.Number(label="min_mask_region_area", precision=0, value=0)
+                with gr.Accordion("Discrete Settings"):
+                    with gr.Row():
+                        points_per_side = gr.Number(label="points_per_side", value=32, precision=0)
+                        points_per_batch = gr.Number(label="points_per_batch", value=64, precision=0)
+                        stability_score_offset = gr.Number(label="stability_score_offset", value=1)
+                        crop_n_layers = gr.Number(label="crop_n_layers", precision=0)
+                        crop_n_points_downscale_factor = gr.Number(
+                            label="crop_n_points_downscale_factor", value=1, precision=0)
+                        min_mask_region_area = gr.Number(label="min_mask_region_area", precision=0, value=0)
 
-                with gr.Column():
+                with gr.Accordion("Threshold Settings"):
                     pred_iou_thresh = gr.Slider(label="pred_iou_thresh", minimum=0, maximum=1, value=0.88, step=0.01)
                     stability_score_thresh = gr.Slider(label="stability_score_thresh",
                                                        minimum=0, maximum=1, value=0.95, step=0.01)
@@ -229,7 +232,9 @@ with gr.Blocks() as application:
                     crop_overlap_ratio = gr.Slider(label="crop_overlap_ratio", minimum=0,
                                                    maximum=1, value=512 / 1500, step=0.01)
 
+                with gr.Accordion("Instance Segment Export Settings"):
                     display_rgba_segments = gr.Checkbox(label="Extract RGBA image for each mask")
+                    mask_filter_area = gr.Number(label="Segment Mask Area Filter", precision=0, value=0)
 
             with gr.Column():
                 output = gr.Image(interactive=False, label="Segmentation Map")
@@ -250,6 +255,7 @@ with gr.Blocks() as application:
             crop_n_points_downscale_factor,
             min_mask_region_area,
             display_rgba_segments,
+            mask_filter_area,
         ], outputs=[output, annotation_masks])
 
     with gr.Tab("Predictor"):
