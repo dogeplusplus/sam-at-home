@@ -76,6 +76,7 @@ def generate(
     min_mask_region_area,
     display_rgba_segments,
     mask_filter_area,
+    progress=gr.Progress(),
 ):
     global model
     generator = SamAutomaticMaskGenerator(
@@ -93,16 +94,23 @@ def generate(
         min_mask_region_area=min_mask_region_area,
     )
 
+    progress(0, "Running inference")
+    annotations = generator.generate(image)
+    progress(0.5, "Making color mask")
     annotations = generator.generate(image)
     color_mask = create_color_mask(image, annotations)
     annotation_masks = []
     if display_rgba_segments:
+        progress(0.75, "Extracting RGBA segments")
         annotation_masks = extract_rgba_masks(image, annotations, mask_filter_area)
+
+    progress(1, "Returning masks")
     return color_mask, annotation_masks
 
 
 def load_model(name):
     global model, device, checkpoint_name
+
     if model is None or checkpoint_name != name:
         checkpoint_path = os.path.join("models", name)
         if "vit_b" in name:
@@ -153,10 +161,13 @@ def draw_boxes(image, image_with_boxes):
     return image, 1
 
 
-def guided_prediction(image, fg_canvas, bg_canvas, box_canvas):
+def guided_prediction(image, fg_canvas, bg_canvas, box_canvas, progress=gr.Progress()):
     global model
+    progress(0, "Finding foreground keypoints", total=4)
     fg_points = find_dots(image, fg_canvas)
+    progress(0.25, "Finding background keypoints", total=4)
     bg_points = find_dots(image, bg_canvas)
+    progress(0.5, "Detecting bounding boxes", total=4)
     boxes, _ = detect_boxes(image, box_canvas)
 
     if fg_points.size == 0:
@@ -176,6 +187,7 @@ def guided_prediction(image, fg_canvas, bg_canvas, box_canvas):
     predictor = SamPredictor(model)
     predictor.set_image(image)
 
+    progress(0.75, "Predicting masks", total=4)
     masks, _, _ = predictor.predict(
         point_coords=point_coords,
         point_labels=point_labels,
@@ -185,6 +197,7 @@ def guided_prediction(image, fg_canvas, bg_canvas, box_canvas):
     masks = masks.astype(int)
     colors = [[(1, 0, 0)], [(0, 1, 0)], [(0, 0, 1)]]
     color_masks = [color.label2rgb(masks[i], image, c) for i, c in enumerate(colors)]
+    progress(1, "Returning masks", total=4)
 
     return color_masks
 
@@ -311,16 +324,17 @@ with gr.Blocks() as application:
                 output_masks = gr.Gallery(label="Output Masks")
 
         predict = gr.Button("Predict")
-        predict.click(
-            guided_prediction,
-            inputs=[base_image, fg_canvas, bg_canvas, box_canvas],
-            outputs=output_masks,
-        )
         predict.click(display_detected_keypoints, inputs=[base_image,
                       fg_canvas], outputs=[fg_keypoints, num_fg_keypoints])
         predict.click(display_detected_keypoints, inputs=[base_image,
                       bg_canvas], outputs=[bg_keypoints, num_bg_keypoints])
         predict.click(draw_boxes, inputs=[base_image,
                       box_canvas], outputs=[boxes, num_boxes])
+        predict.click(
+            guided_prediction,
+            inputs=[base_image, fg_canvas, bg_canvas, box_canvas],
+            outputs=output_masks,
+        )
 
+application.queue()
 application.launch()
