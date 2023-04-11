@@ -5,6 +5,7 @@ import logging
 import numpy as np
 import gradio as gr
 
+from pathlib import Path
 from scipy.stats import mode
 from copy import copy
 from einops import repeat
@@ -61,6 +62,7 @@ def extract_rgba_masks(image, annotations, mask_filter_area):
     return image_segments
 
 
+@torch.no_grad()
 def generate(
     image,
     points_per_side,
@@ -97,7 +99,6 @@ def generate(
     progress(0, "Running inference")
     annotations = generator.generate(image)
     progress(0.5, "Making color mask")
-    annotations = generator.generate(image)
     color_mask = create_color_mask(image, annotations)
     annotation_masks = []
     if display_rgba_segments:
@@ -161,6 +162,7 @@ def draw_boxes(image, image_with_boxes):
     return image, 1
 
 
+@torch.no_grad()
 def guided_prediction(image, fg_canvas, bg_canvas, box_canvas, progress=gr.Progress()):
     global model
     progress(0, "Finding foreground keypoints", total=4)
@@ -200,6 +202,61 @@ def guided_prediction(image, fg_canvas, bg_canvas, box_canvas, progress=gr.Progr
     progress(1, "Returning masks", total=4)
 
     return color_masks
+
+
+@torch.no_grad()
+def batch_predict(
+    input_folder,
+    dest_folder,
+    mask_suffix,
+    points_per_side,
+    points_per_batch,
+    pred_iou_thresh,
+    stability_score_thresh,
+    stability_score_offset,
+    box_nms_thresh,
+    crop_n_layers,
+    crop_nms_thresh,
+    crop_overlap_ratio,
+    crop_n_points_downscale_factor,
+    min_mask_region_area,
+    progress=gr.Progress(),
+):
+    if dest_folder is not None:
+        Path(dest_folder).mkdir(exist_ok=True)
+    image_files = [
+        p.resolve() for p in Path(input_folder).rglob("**/*")
+        if p.suffix in {".jpeg", ".png", ".jpg"}
+    ]
+
+    global model
+    generator = SamAutomaticMaskGenerator(
+        model,
+        points_per_side,
+        points_per_batch,
+        pred_iou_thresh,
+        stability_score_thresh,
+        stability_score_offset,
+        box_nms_thresh,
+        crop_n_layers,
+        crop_nms_thresh,
+        crop_overlap_ratio,
+        crop_n_points_downscale_factor,
+        min_mask_region_area=min_mask_region_area,
+    )
+
+    masks = []
+    for i, image_path in enumerate(image_files):
+        progress(i / len(image_files), desc=f"Predicting {str(image_path)}", total=len(image_files))
+        image = cv2.cvtColor(cv2.imread(str(image_path)), cv2.COLOR_BGR2RGB)
+        annotations = generator.generate(image)
+        color_mask = create_color_mask(image, annotations)
+        if dest_folder is not None:
+            dest_file = Path(dest_folder) / f"{image_path.stem}_{mask_suffix or ''}{image_path.suffix}"
+            cv2.imwrite(str(dest_file), color_mask * 255)
+        masks.append(color_mask)
+
+    return masks
 
 
 available_models = [x for x in os.listdir("models") if x.endswith(".pth")]
@@ -252,6 +309,30 @@ with gr.Blocks() as application:
             with gr.Column():
                 output = gr.Image(interactive=False, label="Segmentation Map")
                 annotation_masks = gr.Gallery(label="Segment Images")
+
+                with gr.Accordion("Batch Prediction", open=False):
+                    input_folder = gr.Textbox(label="Image Folder")
+                    dest_folder = gr.Textbox(label="Output Folder")
+                    mask_suffix = gr.Textbox(label="Mask Suffix", value="seg")
+                    batch_outputs = gr.Gallery(label="Batch Outputs")
+
+                    batch_predict_button = gr.Button(value="Batch Predict")
+                    batch_predict_button.click(batch_predict, inputs=[
+                        input_folder,
+                        dest_folder,
+                        mask_suffix,
+                        points_per_side,
+                        points_per_batch,
+                        pred_iou_thresh,
+                        stability_score_thresh,
+                        stability_score_offset,
+                        box_nms_thresh,
+                        crop_n_layers,
+                        crop_nms_thresh,
+                        crop_overlap_ratio,
+                        crop_n_points_downscale_factor,
+                        min_mask_region_area,
+                    ], outputs=[batch_outputs])
 
         submit = gr.Button("Submit")
         submit.click(generate, inputs=[
