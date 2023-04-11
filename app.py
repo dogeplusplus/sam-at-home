@@ -307,8 +307,26 @@ with gr.Blocks() as application:
                     mask_filter_area = gr.Number(label="Segment Mask Area Filter", precision=0, value=0)
 
             with gr.Column():
-                output = gr.Image(interactive=False, label="Segmentation Map")
-                annotation_masks = gr.Gallery(label="Segment Images")
+                with gr.Accordion("Single Prediction"):
+                    output = gr.Image(interactive=False, label="Segmentation Map")
+                    annotation_masks = gr.Gallery(label="Segment Images")
+                    submit = gr.Button("Single Prediction")
+                    submit.click(generate, inputs=[
+                        image,
+                        points_per_side,
+                        points_per_batch,
+                        pred_iou_thresh,
+                        stability_score_thresh,
+                        stability_score_offset,
+                        box_nms_thresh,
+                        crop_n_layers,
+                        crop_nms_thresh,
+                        crop_overlap_ratio,
+                        crop_n_points_downscale_factor,
+                        min_mask_region_area,
+                        display_rgba_segments,
+                        mask_filter_area,
+                    ], outputs=[output, annotation_masks])
 
                 with gr.Accordion("Batch Prediction", open=False):
                     input_folder = gr.Textbox(label="Image Folder")
@@ -333,24 +351,6 @@ with gr.Blocks() as application:
                         crop_n_points_downscale_factor,
                         min_mask_region_area,
                     ], outputs=[batch_outputs])
-
-        submit = gr.Button("Submit")
-        submit.click(generate, inputs=[
-            image,
-            points_per_side,
-            points_per_batch,
-            pred_iou_thresh,
-            stability_score_thresh,
-            stability_score_offset,
-            box_nms_thresh,
-            crop_n_layers,
-            crop_nms_thresh,
-            crop_overlap_ratio,
-            crop_n_points_downscale_factor,
-            min_mask_region_area,
-            display_rgba_segments,
-            mask_filter_area,
-        ], outputs=[output, annotation_masks])
 
     with gr.Tab("Predictor"):
         with gr.Row():
