@@ -275,13 +275,6 @@ with gr.Blocks() as application:
     with gr.Tab("Automatic Segmentor"):
         with gr.Row():
             with gr.Column():
-                with gr.Row():
-                    image = gr.Image(
-                        source="upload",
-                        label="Input Image",
-                        elem_id="image",
-                        brush_radius=20,
-                    )
 
                 with gr.Accordion("Discrete Settings"):
                     with gr.Row():
@@ -302,15 +295,21 @@ with gr.Blocks() as application:
                     crop_overlap_ratio = gr.Slider(label="crop_overlap_ratio", minimum=0,
                                                    maximum=1, value=512 / 1500, step=0.01)
 
-                with gr.Accordion("Instance Segment Export Settings"):
-                    display_rgba_segments = gr.Checkbox(label="Extract RGBA image for each mask")
-                    mask_filter_area = gr.Number(label="Segment Mask Area Filter", precision=0, value=0)
-
             with gr.Column():
-                with gr.Accordion("Single Prediction"):
+                with gr.Tab("Single Prediction"):
+                    image = gr.Image(
+                        source="upload",
+                        label="Input Image",
+                        elem_id="image",
+                        brush_radius=20,
+                    )
+                    with gr.Accordion("Instance Segment Export Settings"):
+                        display_rgba_segments = gr.Checkbox(label="Extract RGBA image for each mask")
+                        mask_filter_area = gr.Number(label="Segment Mask Area Filter", precision=0, value=0)
+
+                    submit = gr.Button("Single Prediction")
                     output = gr.Image(interactive=False, label="Segmentation Map")
                     annotation_masks = gr.Gallery(label="Segment Images")
-                    submit = gr.Button("Single Prediction")
                     submit.click(generate, inputs=[
                         image,
                         points_per_side,
@@ -328,13 +327,12 @@ with gr.Blocks() as application:
                         mask_filter_area,
                     ], outputs=[output, annotation_masks])
 
-                with gr.Accordion("Batch Prediction", open=False):
+                with gr.Tab("Batch Prediction"):
                     input_folder = gr.Textbox(label="Image Folder")
                     dest_folder = gr.Textbox(label="Output Folder")
                     mask_suffix = gr.Textbox(label="Mask Suffix", value="seg")
-                    batch_outputs = gr.Gallery(label="Batch Outputs")
-
                     batch_predict_button = gr.Button(value="Batch Predict")
+                    batch_outputs = gr.Gallery(label="Batch Outputs")
                     batch_predict_button.click(batch_predict, inputs=[
                         input_folder,
                         dest_folder,
