@@ -7,7 +7,6 @@ import gradio as gr
 
 from pathlib import Path
 from scipy.stats import mode
-from copy import copy
 from einops import repeat
 from skimage import color
 from skimage.measure import label
@@ -127,11 +126,23 @@ def load_model(name):
         logger.info(f"Loaded model: {checkpoint_name}")
 
 
-def display_detected_keypoints(image, image_with_keypoints):
-    diff_mask = np.max(image != image_with_keypoints, axis=-1) * 255
-    _, num_labels = label(diff_mask, return_num=True)
-    diff_mask = repeat(diff_mask, "... -> ... 3")
-    return diff_mask, num_labels
+def display_detected_keypoints(image, fg_keypoints, bg_keypoints, bbox):
+    pos_diff_mask = np.max(image != fg_keypoints, axis=-1)
+    _, num_positive = label(pos_diff_mask, return_num=True)
+
+    neg_diff_mask = np.max(image != bg_keypoints, axis=-1)
+    _, num_negative = label(neg_diff_mask, return_num=True)
+
+    sections = [
+        (pos_diff_mask, "Positive"),
+        (neg_diff_mask, "Negative"),
+    ]
+
+    box = detect_boxes(image, bbox)
+    if box is not None:
+        sections.append((tuple(box), "Bounding Box"))
+
+    return ((image, sections), num_positive, num_negative)
 
 
 def detect_boxes(image, image_with_boxes):
@@ -140,7 +151,7 @@ def detect_boxes(image, image_with_boxes):
 
     # No boxes
     if np.max(diff_mask) == 0:
-        return None, None
+        return None
 
     # Get counts of each pixel color in the diff, select those only with a count above a threshold
     # The diff mask will contain colors that are anti-aliased, we want to ignore these
@@ -150,16 +161,7 @@ def detect_boxes(image, image_with_boxes):
     bounding_mask = ((color_mask & diff_mask)).astype(np.uint8)
     x, y, w, h = cv2.boundingRect(bounding_mask)
     box = np.array([x, y, x + w, y + h])
-    return box, box_color.tolist()
-
-
-def draw_boxes(image, image_with_boxes):
-    box, color = detect_boxes(image, image_with_boxes)
-    image = copy(image)
-    if box is None:
-        return image, 0
-    cv2.rectangle(image, box[:2], box[2:], list(color), 5)
-    return image, 1
+    return box
 
 
 @torch.no_grad()
@@ -170,7 +172,7 @@ def guided_prediction(image, fg_canvas, bg_canvas, box_canvas, progress=gr.Progr
     progress(0.25, "Finding background keypoints", total=4)
     bg_points = find_dots(image, bg_canvas)
     progress(0.5, "Detecting bounding boxes", total=4)
-    boxes, _ = detect_boxes(image, box_canvas)
+    boxes = detect_boxes(image, box_canvas)
 
     if fg_points.size == 0:
         if bg_points.size == 0:
@@ -257,6 +259,10 @@ def batch_predict(
         masks.append(color_mask)
 
     return masks
+
+
+def set_sketch_images(image):
+    return image, image, image
 
 
 available_models = [x for x in os.listdir("models") if x.endswith(".pth")]
@@ -351,64 +357,55 @@ with gr.Blocks() as application:
                     ], outputs=[batch_outputs])
 
     with gr.Tab("Predictor"):
+        pred_instructions = """
+        ## Instructions
+        The predictor tab uses the `SamPredictor` class interface for doing inference. \
+        This exists to allow users to insert foreground/background keypoints into the \
+        image to guide the segmentation.
+
+        1. Upload the image using the `Base Image` canvas. This will auto-populate the \
+        foreground/background canvas
+        2. Add Foreground/Background keypoints by placing dots on the respective canvases.
+        3. (Optional) Draw a crude bounding box in the experimental box around an object. \
+        The UI will determine a bounding rectangle which is then used for the `predict` interface. \
+        **Note: currently supports only a single bounding box for now.**
+        4. Click on the predict button.
+
+        **Notes: Ensure that the color is not exactly the same as the pixels on the base image \
+        where you are placing points. Any color or even multiple colors are allowed, so long \
+        as it's different from the point on the base image. There's a heuristic algorithm that \
+        locates the points by computing the diff of the base/keypoint images, taking the centre \
+        of mass of each label. As such brush strokes/more complex shapes are treated as a single point.**
+        """
+        gr.Markdown(pred_instructions)
+
         with gr.Row():
-            with gr.Column():
-                base_image = gr.Image(label="Base Image", source="upload")
+            base_image = gr.Image(label="Base Image", source="upload")
 
-                with gr.Row():
-                    fg_canvas = gr.Image(label="Foreground Keypoints", tool="color-sketch", brush_radius=30)
-                    fg_keypoints = gr.Image(label="Detected Foreground Keypoints", interactive=False)
+        with gr.Row():
+            fg_canvas = gr.Image(label="Foreground Keypoints", tool="color-sketch", brush_radius=20)
+            bg_canvas = gr.Image(label="Background Keypoints", tool="color-sketch", brush_radius=20)
+            box_canvas = gr.Image(label="Box Canvas (Experimental)", tool="color-sketch", brush_radius=20)
 
-                with gr.Row():
-                    bg_canvas = gr.Image(label="Background Keypoints", tool="color-sketch", brush_radius=30)
-                    bg_keypoints = gr.Image(label="Detected Background Keypoints", interactive=False)
+        with gr.Row():
+            annotated_canvas = gr.AnnotatedImage(label="Annotated Canvas").style(
+                color_map={"Positive": "#46ff33", "Negative": "#ff3333", "Bounding Box": "#3361ff"}
+            )
 
-                with gr.Row():
-                    box_canvas = gr.Image(label="Box Canvas (Experimental)", tool="color-sketch", brush_radius=30)
-                    boxes = gr.Image(label="Detected Bounding Boxes", interactive=False)
+            base_image.upload(set_sketch_images, inputs=[base_image], outputs=[fg_canvas, bg_canvas, box_canvas])
 
-                def set_sketch_images(image):
-                    return image, image, image
+        with gr.Row():
+            num_fg_keypoints = gr.Text(label="# Detected Foreground Keypoints", interactive=False)
+            num_bg_keypoints = gr.Text(label="# Detected Background Keypoints", interactive=False)
+            num_boxes = gr.Text(label="# Detected Bounding Boxes", interactive=False)
 
-                base_image.upload(set_sketch_images, inputs=[base_image], outputs=[fg_canvas, bg_canvas, box_canvas])
+        with gr.Column():
+            predict = gr.Button("Predict")
+            output_masks = gr.Gallery(label="Output Masks")
 
-                with gr.Row():
-                    num_fg_keypoints = gr.Text(label="# Detected Foreground Keypoints", interactive=False)
-                    num_bg_keypoints = gr.Text(label="# Detected Background Keypoints", interactive=False)
-                    num_boxes = gr.Text(label="# Detected Bounding Boxes", interactive=False)
-
-            pred_instructions = """
-            ## Instructions
-            The predictor tab uses the `SamPredictor` class interface for doing inference. \
-            This exists to allow users to insert foreground/background keypoints into the \
-            image to guide the segmentation.
-
-            1. Upload the image using the `Base Image` canvas. This will auto-populate the \
-            foreground/background canvas
-            2. Add Foreground/Background keypoints by placing dots on the respective canvases.
-            3. (Optional) Draw a crude bounding box in the experimental box around an object. \
-            The UI will determine a bounding rectangle which is then used for the `predict` interface. \
-            **Note: currently supports only a single bounding box for now.**
-            4. Click on the predict button.
-
-            **Notes: Ensure that the color is not exactly the same as the pixels on the base image \
-            where you are placing points. Any color or even multiple colors are allowed, so long \
-            as it's different from the point on the base image. There's a heuristic algorithm that \
-            locates the points by computing the diff of the base/keypoint images, taking the centre \
-            of mass of each label. As such brush strokes/more complex shapes are treated as a single point.**
-            """
-
-            with gr.Column():
-                gr.Markdown(pred_instructions)
-                output_masks = gr.Gallery(label="Output Masks")
-
-        predict = gr.Button("Predict")
         predict.click(display_detected_keypoints, inputs=[base_image,
-                      fg_canvas], outputs=[fg_keypoints, num_fg_keypoints])
-        predict.click(display_detected_keypoints, inputs=[base_image,
-                      bg_canvas], outputs=[bg_keypoints, num_bg_keypoints])
-        predict.click(draw_boxes, inputs=[base_image,
-                      box_canvas], outputs=[boxes, num_boxes])
+                      fg_canvas, bg_canvas, box_canvas], outputs=[annotated_canvas, num_fg_keypoints, num_bg_keypoints])
+
         predict.click(
             guided_prediction,
             inputs=[base_image, fg_canvas, bg_canvas, box_canvas],
