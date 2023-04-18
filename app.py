@@ -261,6 +261,10 @@ def set_sketch_images(image):
     return image, image, image
 
 
+def compute_image_embedding(predictor: SamPredictor, image: np.ndarray):
+    predictor.set_image(image)
+
+
 available_models = [x for x in os.listdir("models") if x.endswith(".pth")]
 default_model = available_models[0]
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -399,32 +403,19 @@ with gr.Blocks() as application:
 
         predict = gr.Button("Predict")
 
-        fg_canvas.change(
-            display_detected_keypoints,
-            inputs=[base_image, fg_canvas, bg_canvas, box_canvas],
-            outputs=[annotated_canvas, num_fg_keypoints, num_bg_keypoints],
-        )
-        bg_canvas.change(
-            display_detected_keypoints,
-            inputs=[base_image, fg_canvas, bg_canvas, box_canvas],
-            outputs=[annotated_canvas, num_fg_keypoints, num_bg_keypoints],
-        )
-        box_canvas.change(
-            display_detected_keypoints,
-            inputs=[base_image, fg_canvas, bg_canvas, box_canvas],
-            outputs=[annotated_canvas, num_fg_keypoints, num_bg_keypoints]
-        )
-
-        def compute_image_embedding(predictor: SamPredictor, image: np.ndarray):
-            predictor.set_image(image)
-
         base_image.upload(compute_image_embedding, inputs=[predictor_state, base_image])
 
-        predict.click(
-            guided_prediction,
-            inputs=[predictor_state, base_image, fg_canvas, bg_canvas, box_canvas],
-            outputs=output_masks,
-        )
+        for elem in [fg_canvas, bg_canvas, box_canvas]:
+            elem.change(
+                display_detected_keypoints,
+                inputs=[base_image, fg_canvas, bg_canvas, box_canvas],
+                outputs=[annotated_canvas, num_fg_keypoints, num_bg_keypoints],
+            )
+            elem.change(
+                guided_prediction,
+                inputs=[predictor_state, base_image, fg_canvas, bg_canvas, box_canvas],
+                outputs=output_masks,
+            )
 
 application.queue()
 application.launch()
