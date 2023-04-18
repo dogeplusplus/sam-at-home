@@ -5,6 +5,7 @@ import logging
 import numpy as np
 import gradio as gr
 
+from typing import Tuple, Dict, Any, List
 from pathlib import Path
 from scipy.stats import mode
 from einops import repeat
@@ -23,7 +24,7 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 
-def find_dots(image, image_with_keypoints):
+def find_dots(image: np.ndarray, image_with_keypoints: np.ndarray) -> np.ndarray:
     # Check for diffs for any of (R, G, B)
     diff_mask = np.max(image != image_with_keypoints, axis=-1)
     # Assign each connected component as its own label
@@ -38,7 +39,7 @@ def find_dots(image, image_with_keypoints):
     return np.array(points)
 
 
-def create_color_mask(image, annotations):
+def create_color_mask(image: np.ndarray, annotations: Dict[str, Any]) -> np.ndarray:
     if len(annotations) == 0:
         return image
 
@@ -50,7 +51,11 @@ def create_color_mask(image, annotations):
     return color_mask
 
 
-def extract_rgba_masks(image, annotations, mask_filter_area):
+def extract_rgba_masks(
+    image: np.ndarray,
+    annotations: Dict[str, Any],
+    mask_filter_area: float,
+) -> List[np.ndarray]:
     image_segments = []
     for ann in annotations:
         if np.sum(ann["segmentation"]) >= mask_filter_area:
@@ -65,21 +70,21 @@ def extract_rgba_masks(image, annotations, mask_filter_area):
 def generate(
     predictor: SamPredictor,
     image: np.ndarray,
-    points_per_side,
-    points_per_batch,
-    pred_iou_thresh,
-    stability_score_thresh,
-    stability_score_offset,
-    box_nms_thresh,
-    crop_n_layers,
-    crop_nms_thresh,
-    crop_overlap_ratio,
-    crop_n_points_downscale_factor,
-    min_mask_region_area,
-    display_rgba_segments,
-    mask_filter_area,
+    points_per_side: int,
+    points_per_batch: int,
+    pred_iou_thresh: float,
+    stability_score_thresh: float,
+    stability_score_offset: float,
+    box_nms_thresh: float,
+    crop_n_layers: int,
+    crop_nms_thresh: float,
+    crop_overlap_ratio: float,
+    crop_n_points_downscale_factor: float,
+    min_mask_region_area: float,
+    display_rgba_segments: bool,
+    mask_filter_area: float,
     progress=gr.Progress(),
-):
+) -> Tuple[np.ndarray, np.ndarray]:
     generator = SamAutomaticMaskGenerator(
         predictor.model,
         points_per_side,
@@ -108,7 +113,10 @@ def generate(
     return color_mask, annotation_masks
 
 
-def load_model(name, device):
+def load_model(
+    name: str,
+    device: str,
+) -> SamPredictor:
     checkpoint_path = os.path.join("models", name)
     if "vit_b" in name:
         model = build_sam_vit_b(checkpoint_path)
@@ -125,7 +133,12 @@ def load_model(name, device):
     return SamPredictor(model)
 
 
-def display_detected_keypoints(image, fg_keypoints, bg_keypoints, bbox):
+def display_detected_keypoints(
+    image: np.ndarray,
+    fg_keypoints: np.ndarray,
+    bg_keypoints: np.ndarray,
+    bbox: np.ndarray,
+):
     pos_diff_mask = np.max(image != fg_keypoints, axis=-1)
     _, num_positive = label(pos_diff_mask, return_num=True)
 
@@ -144,13 +157,11 @@ def display_detected_keypoints(image, fg_keypoints, bg_keypoints, bbox):
     return ((image, sections), num_positive, num_negative)
 
 
-def detect_boxes(image, image_with_boxes):
+def detect_boxes(image: np.ndarray, image_with_boxes: np.ndarray) -> np.ndarray:
     diff_mask = np.sum(image != image_with_boxes, axis=-1) > 0
-    box_colors = image_with_boxes[diff_mask]
-
-    # No boxes
     if np.max(diff_mask) == 0:
         return None
+    box_colors = image_with_boxes[diff_mask]
 
     # Get counts of each pixel color in the diff, select those only with a count above a threshold
     # The diff mask will contain colors that are anti-aliased, we want to ignore these
@@ -164,7 +175,15 @@ def detect_boxes(image, image_with_boxes):
 
 
 @torch.no_grad()
-def guided_prediction(predictor, image, fg_canvas, bg_canvas, box_canvas, progress=gr.Progress()):
+def guided_prediction(
+    predictor: SamPredictor,
+    logits: np.ndarray,
+    image: np.ndarray,
+    fg_canvas: np.ndarray,
+    bg_canvas: np.ndarray,
+    box_canvas: np.ndarray,
+    progress: gr.Progress = gr.Progress(),
+) -> Tuple[np.ndarray, np.ndarray]:
     progress(0, "Finding foreground keypoints", total=4)
     fg_points = find_dots(image, fg_canvas)
     progress(0.25, "Finding background keypoints", total=4)
@@ -187,7 +206,7 @@ def guided_prediction(predictor, image, fg_canvas, bg_canvas, box_canvas, progre
         point_labels = np.concatenate([np.ones(len(fg_points)), np.zeros(len(bg_points))])
 
     progress(0.75, "Predicting masks", total=4)
-    masks, _, _ = predictor.predict(
+    masks, _, logits = predictor.predict(
         point_coords=point_coords,
         point_labels=point_labels,
         box=boxes,
@@ -199,28 +218,28 @@ def guided_prediction(predictor, image, fg_canvas, bg_canvas, box_canvas, progre
     color_masks = [color.label2rgb(masks[i], image, c) for i, c in enumerate(colors)]
     progress(1, "Returning masks", total=4)
 
-    return color_masks
+    return color_masks, logits
 
 
 @torch.no_grad()
 def batch_predict(
     predictor: SamPredictor,
-    input_folder,
-    dest_folder,
-    mask_suffix,
-    points_per_side,
-    points_per_batch,
-    pred_iou_thresh,
-    stability_score_thresh,
-    stability_score_offset,
-    box_nms_thresh,
-    crop_n_layers,
-    crop_nms_thresh,
-    crop_overlap_ratio,
-    crop_n_points_downscale_factor,
-    min_mask_region_area,
-    progress=gr.Progress(),
-):
+    input_folder: str,
+    dest_folder: str,
+    mask_suffix: str,
+    points_per_side: int,
+    points_per_batch: int,
+    pred_iou_thresh: float,
+    stability_score_thresh: float,
+    stability_score_offset: float,
+    box_nms_thresh: float,
+    crop_n_layers: int,
+    crop_nms_thresh: float,
+    crop_overlap_ratio: float,
+    crop_n_points_downscale_factor: float,
+    min_mask_region_area: float,
+    progress: gr.Progress = gr.Progress(),
+) -> List[np.ndarray]:
     if dest_folder is not None:
         Path(dest_folder).mkdir(exist_ok=True)
     image_files = [
@@ -257,12 +276,14 @@ def batch_predict(
     return masks
 
 
-def set_sketch_images(image):
+def set_sketch_images(image: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     return image, image, image
 
 
 def compute_image_embedding(predictor: SamPredictor, image: np.ndarray):
     predictor.set_image(image)
+    # Reset logits
+    return None
 
 
 available_models = [x for x in os.listdir("models") if x.endswith(".pth")]
@@ -389,8 +410,6 @@ with gr.Blocks() as application:
             bg_canvas = gr.Image(label="Background Keypoints", tool="color-sketch", brush_radius=20)
             box_canvas = gr.Image(label="Box Canvas (Experimental)", tool="color-sketch", brush_radius=20)
 
-        base_image.upload(set_sketch_images, inputs=[base_image], outputs=[fg_canvas, bg_canvas, box_canvas])
-
         with gr.Row():
             num_fg_keypoints = gr.Text(label="# Detected Foreground Keypoints", interactive=False)
             num_bg_keypoints = gr.Text(label="# Detected Background Keypoints", interactive=False)
@@ -403,7 +422,9 @@ with gr.Blocks() as application:
 
         predict = gr.Button("Predict")
 
-        base_image.upload(compute_image_embedding, inputs=[predictor_state, base_image])
+        logits = gr.State()
+        base_image.upload(compute_image_embedding, inputs=[predictor_state, base_image], outputs=logits)
+        base_image.upload(set_sketch_images, inputs=[base_image], outputs=[fg_canvas, bg_canvas, box_canvas])
 
         for elem in [fg_canvas, bg_canvas, box_canvas]:
             elem.change(
@@ -413,8 +434,8 @@ with gr.Blocks() as application:
             )
             elem.change(
                 guided_prediction,
-                inputs=[predictor_state, base_image, fg_canvas, bg_canvas, box_canvas],
-                outputs=output_masks,
+                inputs=[predictor_state, logits, base_image, fg_canvas, bg_canvas, box_canvas],
+                outputs=[output_masks, logits],
             )
 
 application.queue()
