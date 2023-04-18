@@ -63,7 +63,8 @@ def extract_rgba_masks(image, annotations, mask_filter_area):
 
 @torch.no_grad()
 def generate(
-    image,
+    predictor: SamPredictor,
+    image: np.ndarray,
     points_per_side,
     points_per_batch,
     pred_iou_thresh,
@@ -79,9 +80,8 @@ def generate(
     mask_filter_area,
     progress=gr.Progress(),
 ):
-    global model
     generator = SamAutomaticMaskGenerator(
-        model,
+        predictor.model,
         points_per_side,
         points_per_batch,
         pred_iou_thresh,
@@ -108,22 +108,21 @@ def generate(
     return color_mask, annotation_masks
 
 
-def load_model(name):
-    global model, device, checkpoint_name
+def load_model(name, device):
+    checkpoint_path = os.path.join("models", name)
+    if "vit_b" in name:
+        model = build_sam_vit_b(checkpoint_path)
+    elif "vit_h" in name:
+        model = build_sam_vit_h(checkpoint_path)
+    elif "vit_l" in name:
+        model = build_sam_vit_l(checkpoint_path)
+    else:
+        raise ValueError(f"Invalid checkpoint name: {name}")
 
-    if model is None or checkpoint_name != name:
-        checkpoint_path = os.path.join("models", name)
-        if "vit_b" in name:
-            model = build_sam_vit_b(checkpoint_path)
-        elif "vit_h" in name:
-            model = build_sam_vit_h(checkpoint_path)
-        elif "vit_l" in name:
-            model = build_sam_vit_l(checkpoint_path)
-        else:
-            raise ValueError(f"Invalid checkpoint name: {name}")
-        checkpoint_name = name
-        model.to(device)
-        logger.info(f"Loaded model: {checkpoint_name}")
+    model.to(device)
+    logger.info(f"Loaded model: {name}")
+
+    return SamPredictor(model)
 
 
 def display_detected_keypoints(image, fg_keypoints, bg_keypoints, bbox):
@@ -165,8 +164,7 @@ def detect_boxes(image, image_with_boxes):
 
 
 @torch.no_grad()
-def guided_prediction(image, fg_canvas, bg_canvas, box_canvas, progress=gr.Progress()):
-    global model
+def guided_prediction(predictor, image, fg_canvas, bg_canvas, box_canvas, progress=gr.Progress()):
     progress(0, "Finding foreground keypoints", total=4)
     fg_points = find_dots(image, fg_canvas)
     progress(0.25, "Finding background keypoints", total=4)
@@ -188,9 +186,6 @@ def guided_prediction(image, fg_canvas, bg_canvas, box_canvas, progress=gr.Progr
         point_coords = np.concatenate([fg_points, bg_points])
         point_labels = np.concatenate([np.ones(len(fg_points)), np.zeros(len(bg_points))])
 
-    predictor = SamPredictor(model)
-    predictor.set_image(image)
-
     progress(0.75, "Predicting masks", total=4)
     masks, _, _ = predictor.predict(
         point_coords=point_coords,
@@ -200,6 +195,7 @@ def guided_prediction(image, fg_canvas, bg_canvas, box_canvas, progress=gr.Progr
     )
     masks = masks.astype(int)
     colors = [[(1, 0, 0)], [(0, 1, 0)], [(0, 0, 1)]]
+
     color_masks = [color.label2rgb(masks[i], image, c) for i, c in enumerate(colors)]
     progress(1, "Returning masks", total=4)
 
@@ -208,6 +204,7 @@ def guided_prediction(image, fg_canvas, bg_canvas, box_canvas, progress=gr.Progr
 
 @torch.no_grad()
 def batch_predict(
+    predictor: SamPredictor,
     input_folder,
     dest_folder,
     mask_suffix,
@@ -231,9 +228,8 @@ def batch_predict(
         if p.suffix in {".jpeg", ".png", ".jpg"}
     ]
 
-    global model
     generator = SamAutomaticMaskGenerator(
-        model,
+        predictor.model,
         points_per_side,
         points_per_batch,
         pred_iou_thresh,
@@ -267,17 +263,17 @@ def set_sketch_images(image):
 
 available_models = [x for x in os.listdir("models") if x.endswith(".pth")]
 default_model = available_models[0]
-model = None
-checkpoint_name = None
 device = "cuda" if torch.cuda.is_available() else "cpu"
-load_model(default_model)
+default_predictor = load_model(default_model, device)
 
 with gr.Blocks() as application:
     gr.Markdown(value="# Segment Anything At Home")
     selected_model = gr.Dropdown(choices=available_models, label="Model",
                                  value=default_model, interactive=True)
 
-    selected_model.change(load_model, inputs=[selected_model], show_progress=True)
+    predictor_state = gr.State(default_predictor)
+    selected_model.change(lambda x: load_model(x, device), inputs=[
+                          selected_model], outputs=[predictor_state], show_progress=True)
     with gr.Tab("Automatic Segmentor"):
         with gr.Row():
             with gr.Column():
@@ -317,6 +313,7 @@ with gr.Blocks() as application:
                     output = gr.Image(interactive=False, label="Segmentation Map")
                     annotation_masks = gr.Gallery(label="Segment Images")
                     submit.click(generate, inputs=[
+                        predictor_state,
                         image,
                         points_per_side,
                         points_per_batch,
@@ -340,6 +337,7 @@ with gr.Blocks() as application:
                     batch_predict_button = gr.Button(value="Batch Predict")
                     batch_outputs = gr.Gallery(label="Batch Outputs")
                     batch_predict_button.click(batch_predict, inputs=[
+                        predictor_state,
                         input_folder,
                         dest_folder,
                         mask_suffix,
@@ -417,9 +415,14 @@ with gr.Blocks() as application:
             outputs=[annotated_canvas, num_fg_keypoints, num_bg_keypoints]
         )
 
+        def compute_image_embedding(predictor: SamPredictor, image: np.ndarray):
+            predictor.set_image(image)
+
+        base_image.upload(compute_image_embedding, inputs=[predictor_state, base_image])
+
         predict.click(
             guided_prediction,
-            inputs=[base_image, fg_canvas, bg_canvas, box_canvas],
+            inputs=[predictor_state, base_image, fg_canvas, bg_canvas, box_canvas],
             outputs=output_masks,
         )
 
