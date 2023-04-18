@@ -387,24 +387,35 @@ with gr.Blocks() as application:
             bg_canvas = gr.Image(label="Background Keypoints", tool="color-sketch", brush_radius=20)
             box_canvas = gr.Image(label="Box Canvas (Experimental)", tool="color-sketch", brush_radius=20)
 
-        with gr.Row():
-            annotated_canvas = gr.AnnotatedImage(label="Annotated Canvas").style(
-                color_map={"Positive": "#46ff33", "Negative": "#ff3333", "Bounding Box": "#3361ff"}
-            )
-
-            base_image.upload(set_sketch_images, inputs=[base_image], outputs=[fg_canvas, bg_canvas, box_canvas])
+        base_image.upload(set_sketch_images, inputs=[base_image], outputs=[fg_canvas, bg_canvas, box_canvas])
 
         with gr.Row():
             num_fg_keypoints = gr.Text(label="# Detected Foreground Keypoints", interactive=False)
             num_bg_keypoints = gr.Text(label="# Detected Background Keypoints", interactive=False)
-            num_boxes = gr.Text(label="# Detected Bounding Boxes", interactive=False)
 
-        with gr.Column():
-            predict = gr.Button("Predict")
-            output_masks = gr.Gallery(label="Output Masks")
+        with gr.Row():
+            annotated_canvas = gr.AnnotatedImage(label="Annotated Canvas").style(
+                color_map={"Positive": "#46ff33", "Negative": "#ff3333", "Bounding Box": "#3361ff"}
+            )
+            output_masks = gr.Gallery(label="Output Masks").style(preview=True)
 
-        predict.click(display_detected_keypoints, inputs=[base_image,
-                      fg_canvas, bg_canvas, box_canvas], outputs=[annotated_canvas, num_fg_keypoints, num_bg_keypoints])
+        predict = gr.Button("Predict")
+
+        fg_canvas.change(
+            display_detected_keypoints,
+            inputs=[base_image, fg_canvas, bg_canvas, box_canvas],
+            outputs=[annotated_canvas, num_fg_keypoints, num_bg_keypoints],
+        )
+        bg_canvas.change(
+            display_detected_keypoints,
+            inputs=[base_image, fg_canvas, bg_canvas, box_canvas],
+            outputs=[annotated_canvas, num_fg_keypoints, num_bg_keypoints],
+        )
+        box_canvas.change(
+            display_detected_keypoints,
+            inputs=[base_image, fg_canvas, bg_canvas, box_canvas],
+            outputs=[annotated_canvas, num_fg_keypoints, num_bg_keypoints]
+        )
 
         predict.click(
             guided_prediction,
