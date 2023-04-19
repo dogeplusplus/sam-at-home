@@ -177,7 +177,7 @@ def detect_boxes(image: np.ndarray, image_with_boxes: np.ndarray) -> np.ndarray:
 @torch.no_grad()
 def guided_prediction(
     predictor: SamPredictor,
-    logits: np.ndarray,
+    low_res_mask: np.ndarray,
     image: np.ndarray,
     fg_canvas: np.ndarray,
     bg_canvas: np.ndarray,
@@ -206,19 +206,24 @@ def guided_prediction(
         point_labels = np.concatenate([np.ones(len(fg_points)), np.zeros(len(bg_points))])
 
     progress(0.75, "Predicting masks", total=4)
-    masks, _, logits = predictor.predict(
+    masks, scores, low_res_mask = predictor.predict(
         point_coords=point_coords,
         point_labels=point_labels,
+        mask_input=low_res_mask,
         box=boxes,
         multimask_output=True,
     )
+
+    # Mask input is 1 x H x W
+    low_res_mask = low_res_mask[[np.argmax(scores)]]
+
     masks = masks.astype(int)
     colors = [[(1, 0, 0)], [(0, 1, 0)], [(0, 0, 1)]]
 
     color_masks = [color.label2rgb(masks[i], image, c) for i, c in enumerate(colors)]
     progress(1, "Returning masks", total=4)
 
-    return color_masks, logits
+    return color_masks, low_res_mask
 
 
 @torch.no_grad()
@@ -282,7 +287,7 @@ def set_sketch_images(image: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.nda
 
 def compute_image_embedding(predictor: SamPredictor, image: np.ndarray):
     predictor.set_image(image)
-    # Reset logits
+    # Reset best mask
     return None
 
 
@@ -422,8 +427,8 @@ with gr.Blocks() as application:
 
         predict = gr.Button("Predict")
 
-        logits = gr.State()
-        base_image.upload(compute_image_embedding, inputs=[predictor_state, base_image], outputs=logits)
+        previous_mask = gr.State()
+        base_image.upload(compute_image_embedding, inputs=[predictor_state, base_image], outputs=previous_mask)
         base_image.upload(set_sketch_images, inputs=[base_image], outputs=[fg_canvas, bg_canvas, box_canvas])
 
         for elem in [fg_canvas, bg_canvas, box_canvas]:
@@ -434,8 +439,8 @@ with gr.Blocks() as application:
             )
             elem.change(
                 guided_prediction,
-                inputs=[predictor_state, logits, base_image, fg_canvas, bg_canvas, box_canvas],
-                outputs=[output_masks, logits],
+                inputs=[predictor_state, previous_mask, base_image, fg_canvas, bg_canvas, box_canvas],
+                outputs=[output_masks, previous_mask],
             )
 
 application.queue()
